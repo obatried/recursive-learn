@@ -20,7 +20,13 @@ mkdir -p "$COMMANDS" "$HOOKS" "$STATE_RL" "$STATE_LEARN"
 cp "$SRC/commands/learn.md"          "$COMMANDS/learn.md"
 cp "$SRC/hooks/learn-trigger.sh"     "$HOOKS/learn-trigger.sh"
 cp "$SRC/hooks/learn-preflight.sh"   "$HOOKS/learn-preflight.sh"
-chmod +x "$HOOKS/learn-trigger.sh" "$HOOKS/learn-preflight.sh"
+cp "$SRC/hooks/learn-guard.sh"       "$HOOKS/learn-guard.sh"
+chmod +x "$HOOKS/learn-trigger.sh" "$HOOKS/learn-preflight.sh" "$HOOKS/learn-guard.sh"
+
+# Seed the guard specs only if absent (empty array => the guard is a total no-op).
+GUARDS="$CLAUDE/state/guards"
+mkdir -p "$GUARDS"
+[ -f "$GUARDS/guard-specs.json" ] || cp "$SRC/state/guard-specs.seed.json" "$GUARDS/guard-specs.json"
 
 # Seed the checklist only if absent — never clobber a user's accumulated one.
 if [ ! -f "$STATE_RL/verify-preflight.md" ]; then
@@ -61,6 +67,14 @@ def ensure(event, command):
 
 a = ensure("UserPromptSubmit", "$HOME/.claude/hooks/learn-trigger.sh")
 b = ensure("SessionStart",     "$HOME/.claude/hooks/learn-preflight.sh")
+# PreToolUse guard needs a matcher so it only runs on the relevant tools.
+g_arr = hooks.setdefault("PreToolUse", [])
+if not isinstance(g_arr, list):
+    sys.exit("settings.json hooks.PreToolUse is not a list; refusing to edit. Fix it by hand.")
+g_cmd = "$HOME/.claude/hooks/learn-guard.sh"
+g = not any(isinstance(e, dict) and any(isinstance(hc, dict) and hc.get("command") == g_cmd for hc in (e.get("hooks", []) or [])) for e in g_arr)
+if g:
+    g_arr.append({"matcher": "Write|Edit|MultiEdit|Bash", "hooks": [{"type": "command", "command": g_cmd}]})
 
 # Atomic write: temp file in the same dir, validate, then rename over the target.
 dirn = os.path.dirname(os.path.abspath(p)) or "."
@@ -76,6 +90,7 @@ except BaseException:
     raise
 print(f"UserPromptSubmit hook {'added' if a else 'already present'}")
 print(f"SessionStart hook {'added' if b else 'already present'}")
+print(f"PreToolUse guard hook {'added' if g else 'already present'}")
 print("settings.json valid")
 PY
 

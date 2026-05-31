@@ -45,13 +45,23 @@ Two destinations:
 
 2. **The verify flywheel** → append/refresh the rolling checklist at `~/.claude/state/recursive-learning/verify-preflight.md`. Keep it to the **top 3–5 recurring verification misses, one line each.** This file is injected into context at the start of every session by `learn-preflight.sh`, which is what makes verify-first *active* instead of buried. Demote stale entries; promote whatever bit this session.
 
-**The escalation ladder (don't skip — this is what makes the system self-correcting).** A lesson lives at one of three levels. Each `/learn` run, move it UP a level if it recurred, never just re-note it at the same level. Writing the same lesson down again at the same level is the failure mode — it feels like progress and changes nothing.
+**First, classify the trigger's DETECTABILITY — this decides whether you can actually guarantee non-recurrence.**
 
-- **L0 — one-off** → a `feedback_*.md` memory. (A rule exists now.)
-- **L1 — recurred despite the memory** → the memory wasn't enough (it only fires when read). Promote to `verify-preflight.md` so it's injected at session start. Tag the line with a recurrence count, e.g. `(seen 2x)`.
-- **L2 — recurred AGAIN while already on the preflight** → **the soft mechanism has failed.** A session-start checklist clearly isn't catching it, because the failure happens mid-turn, not at session start. Do NOT just bump the count and move on. **Propose a harder, in-the-moment mechanism** — a targeted PreToolUse/PostToolUse hook that fires on the *specific action* (e.g. nudge right after a Read/Bash when about to make a state claim), or a Stop-gate. Hardening is load-bearing → **describe the proposed hook + the trigger and ASK before building it** (Step 4 rules apply).
+**Detectable** — the trigger is an exact thing a shell hook can see: a file path you must never write, or a Bash command pattern you must never run. → **Install a hard guard NOW, on the FIRST identification — do not wait for a 2nd occurrence.** Append a spec to `~/.claude/state/guards/guard-specs.json`; the pre-installed `learn-guard.sh` PreToolUse hook reads it and DENIES the matching call (the tool is blocked before it runs). This is the **only** level that genuinely makes a mistake "never again." Recipe (atomic):
+```bash
+jq '. += [{"type":"deny_write_path","path":"/ABS/PATH","reason":"why + what to do instead"}]' \
+   ~/.claude/state/guards/guard-specs.json > ~/.claude/state/guards/.gs.$$ \
+   && mv ~/.claude/state/guards/.gs.$$ ~/.claude/state/guards/guard-specs.json
+# command form:  {"type":"deny_bash_regex","pattern":"<portable, ANCHORED ERE>","reason":"..."}
+```
+Rules: store the **absolute** path (match is exact). Keep regexes **portable** (BSD + GNU grep — avoid `\b` and fancy classes if unsure) and **anchored**/specific so they can't over-block a legit command. Label the lesson **`hard-blocked`**. The guard is data-only — you append a line; no new code runs.
 
-**Honest-effectiveness check (required output, no overclaiming):** salience is not a fix. When you report a recurring item, do NOT say "fixed" or "won't happen again" — say which level it's at and that the *only* proof is the recurrence count trending to zero in the run log. If any lesson reaches L2, that IS the evidence the soft layer is failing — surface it loudly, don't bury it.
+**Fuzzy** — a judgment with no clean signature (e.g. "asserted from inference before checking"). A hook cannot reliably detect it, so it **cannot be hard-guaranteed** — be honest, label it **`salience-only`** (less likely, not impossible). Use the soft ladder, moving UP a level on each recurrence (re-noting at the same level is the failure mode — it feels like progress and changes nothing):
+- **L0 one-off** → a `feedback_*.md` memory.
+- **L1 recurred despite the memory** → promote to `verify-preflight.md` (injected at session start), tag `(seen Nx)`.
+- **L2 recurred AGAIN while on the preflight** → the soft layer is provably failing. Best remaining move is the nearest *proxy* guard (e.g. a claim-evidence Stop-check that flags a confident state-claim with no verifying tool-call that turn). **Describe it and ASK before building** (Step 4 rules).
+
+**Honest-effectiveness check (required output, no overclaiming):** for each recurring lesson, state its label (`hard-blocked` = genuinely prevented; `salience-only` = less likely) and level. Never call a `salience-only` lesson "fixed" — the only proof is its recurrence count trending to zero in the run log. A lesson reaching L2 IS evidence the soft layer is failing — surface it loudly.
 
 ## Step 4 — Rule refinement (ask before changing load-bearing rules)
 

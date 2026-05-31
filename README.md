@@ -24,15 +24,24 @@ The insight: a rule sitting in a memory file is **passive** — it only helps wh
 | `commands/learn.md` | The skill. Core = **Assertion Audit**: re-scan your own claims, tag each `verified` / `asserted-from-inference` / `wrong`, and write down the *root reason* behind each miss (generalized, not the one-off incident) so it transfers to the next mistake. |
 | `hooks/learn-trigger.sh` | `UserPromptSubmit` hook (**soft**). Fires once/session when you signal you're wrapping up → nudges "consider `/learn`." Never blocks. |
 | `hooks/learn-preflight.sh` | `SessionStart` hook (**soft**). Injects the verify checklist at session start. |
+| `hooks/learn-guard.sh` | `PreToolUse` hook (**hard, fail-open on error**). Reads `guard-specs.json` and **denies** a tool call that matches a guard `/learn` installed for a previously-corrected, *detectable* mistake. No-op until a spec exists. |
 | `state/verify-preflight.seed.md` | Starter checklist — the flywheel's memory. |
+| `state/guard-specs.seed.json` | Starter (empty) guard list — the enforcement layer's memory. |
+
+## Detectable vs fuzzy: the honest split
+
+Not all mistakes are equal, and the system refuses to pretend otherwise:
+
+- **Detectable** (a file path you must never write, a command you must never run) → `/learn` appends a line to `guard-specs.json` and the `PreToolUse` guard **mechanically blocks it** every time. This is the only thing that genuinely makes a mistake *"never again."* It's data-only — `/learn` appends a spec; no new code runs.
+- **Fuzzy** (a judgment call, "asserted before verifying") → no shell hook can reliably detect it, so it **cannot be guaranteed** — only made *less likely* via the soft layers below. The system labels every lesson `hard-blocked` or `salience-only` so you always know which you've actually got.
 
 ## The escalation ladder (why it self-corrects)
 
-Most "learning" systems just launder mistakes into nicer-looking notes. This one tracks whether its own mechanism is *working*:
+Most "learning" systems just launder mistakes into nicer-looking notes. This one tracks whether its own mechanism is *working*, and for the fuzzy class:
 
 - **L0** one-off → a memory file.
 - **L1** recurred despite the memory → promote to the preflight, tagged `(seen 1x)`.
-- **L2** recurred *again while already on the preflight* → the soft mechanism has **provably failed**. `/learn` must then propose an in-the-moment **hook**, not bump a counter. And it's forbidden from claiming "fixed" — the only proof is the recurrence count trending to zero in the run log.
+- **L2** recurred *again while already on the preflight* → the soft mechanism has **provably failed**. `/learn` proposes the nearest in-the-moment proxy guard, not another note. And it's forbidden from claiming "fixed" — the only proof is the recurrence count trending to zero in the run log.
 
 ## Install
 
