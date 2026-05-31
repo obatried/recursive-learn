@@ -1,6 +1,6 @@
 # recursive-learn
 
-A self-correcting learning loop for [Claude Code](https://claude.com/claude-code). At the end of a session, `/learn` audits the assistant's own claims for the one failure that quietly erodes trust — **asserting a conclusion before verifying it** — turns each miss into a specific check, and feeds it into a checklist that gets injected at the *start* of every future session. So "verify before you assert" stops being a buried rule and becomes an active prompt every time.
+A self-correcting learning loop for [Claude Code](https://claude.com/claude-code). At the end of a session, `/learn` audits the assistant's own claims for the one failure that quietly erodes trust — **asserting a conclusion before verifying it** — generalizes each miss to the *root reason* it happened, and feeds that into a checklist injected at the *start* of every future session. So "verify before you assert" stops being a buried rule and becomes an active prompt every time.
 
 It is deliberately tiny. It does one thing.
 
@@ -21,7 +21,7 @@ The insight: a rule sitting in a memory file is **passive** — it only helps wh
 
 | File | Role |
 |---|---|
-| `commands/learn.md` | The skill. Core = **Assertion Audit**: re-scan your own claims, tag each `verified` / `asserted-from-inference` / `wrong`, turn every miss into a specific trigger→check. |
+| `commands/learn.md` | The skill. Core = **Assertion Audit**: re-scan your own claims, tag each `verified` / `asserted-from-inference` / `wrong`, and write down the *root reason* behind each miss (generalized, not the one-off incident) so it transfers to the next mistake. |
 | `hooks/learn-trigger.sh` | `UserPromptSubmit` hook (**soft**). Fires once/session when you signal you're wrapping up → nudges "consider `/learn`." Never blocks. |
 | `hooks/learn-preflight.sh` | `SessionStart` hook (**soft**). Injects the verify checklist at session start. |
 | `state/verify-preflight.seed.md` | Starter checklist — the flywheel's memory. |

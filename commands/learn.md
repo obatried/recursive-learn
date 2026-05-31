@@ -26,7 +26,12 @@ For each such claim, tag it:
 
 Output a short table: `| claim | tag | the check I should have run first |`.
 
-The `Asserted-from-inference` and `Wrong` rows are the gold. For each, the lesson is never "be more careful" — it is a **specific trigger → specific check**: "when about to claim a data store is empty → open it / query it directly, don't infer from a secondary flag."
+The `Asserted-from-inference` and `Wrong` rows are the gold — but what you write down is **the reason, not the incident**. Writing "when about to claim a data store is empty → query it directly" is a patch for one situation that will never transfer to the next, differently-shaped mistake. Write down the **root reason you made the mistake**, generalized to a rule that fires everywhere that reason applies — yet still concrete enough to act on. Calibrate the altitude:
+- too abstract (useless): "be more careful", "verify more".
+- too specific (a patch, won't transfer): "when claiming a data store is empty, open it first".
+- right (the reason, still actionable): "when you reach a conclusion by inference instead of direct observation — especially when you feel confident — treat it as a hypothesis and run the one direct check before stating it as fact".
+
+The incident is just the example that taught you the reason. **Persist the reason; cite the incident as its example.** And when a new miss shares a root reason with a lesson you already have, do NOT add a new line — **deepen the existing one** (sharpen its wording, bump its recurrence count). That consolidation is the "build on top of it" recursion; a growing list of narrow incidents is the failure mode.
 
 ## Step 2 — Correction mining
 
