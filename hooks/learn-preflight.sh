@@ -16,8 +16,10 @@ command -v jq >/dev/null 2>&1 || exit 0
 PREFLIGHT="$HOME/.claude/state/recursive-learning/verify-preflight.md"
 [ -f "$PREFLIGHT" ] || exit 0
 
-# Keep only the bullet lines; cap length.
-BODY=$(grep -E '^[[:space:]]*-[[:space:]]' "$PREFLIGHT" 2>/dev/null || true); BODY=${BODY:0:1200}
+# Keep only the bullet lines. Cap by BULLET COUNT, not a mid-bullet char cut — a hard
+# char cap silently drops the back half of the checklist once it grows past ~2 bullets,
+# defeating the whole point of the preflight. Generous char backstop guards a runaway file.
+BODY=$(grep -E '^[[:space:]]*-[[:space:]]' "$PREFLIGHT" 2>/dev/null | head -n 8 || true); BODY=${BODY:0:6000}
 [ -z "$BODY" ] && exit 0
 
 # Build the entire payload with jq so escaping is always correct, regardless of

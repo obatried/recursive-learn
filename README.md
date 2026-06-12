@@ -59,6 +59,13 @@ The installer backs up `settings.json` first and validates the JSON after. To un
 
 Every hook here is **soft** — it nudges, never blocks. If you keep skipping `/learn` when nudged, the trigger log tells you, and *that's* the signal to harden — not a guess up front. A blocking hook that misfires is the fastest way to make you hate your own tooling. Earn the block.
 
+## Works well with: total-recall
+
+recursive-learn handles *self-correction*. [total-recall](https://github.com/obatried/total-recall)
+handles *memory* — the `CLAUDE.md` / `MEMORY.md` capture, structure, and search that let a fresh session
+pick up where the last one left off. They compose: run total-recall's `meta-install.sh` to set up both
+at once ("give your AI a memory" + a `/learn` loop in one command).
+
 ## License
 
 MIT.

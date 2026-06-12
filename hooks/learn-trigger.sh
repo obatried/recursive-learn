@@ -6,9 +6,10 @@
 # session. The agent decides whether the session was substantive enough to run.
 #
 # SHOULD match:  "wrapping up", "let's close this out", "done for today",
-#                "I'm gonna close this terminal", "signing off", "that's all for now"
+#                "I'm gonna close this terminal", "signing off", "that's all for now",
+#                "let's continue this in a new terminal", "handoff", "resume tomorrow"
 # Should NOT match: "done with this task", "close the modal", "sign off on this PR"
-#                (task-level / non-session phrasing) — kept narrow on purpose.
+#                (task-level / non-session phrasing).
 
 set -uo pipefail
 exec 2>/dev/null            # SOFT hook: never leak diagnostics to the host stream
@@ -32,7 +33,7 @@ LOWER=$(echo "$PROMPT" | tr '[:upper:]' '[:lower:]')
 
 # Session-end intent. Anchored to "end the session/terminal/chat" or explicit
 # sign-off language, NOT bare "done/close" which fire constantly mid-task.
-TRIGGERS='(wrap(ping)? (this|it|things)? ?up|wrap up here|close (this|the) (terminal|session|chat|window)( (out|down))?|clos(e|ing) (this|it) out|done for (today|the day|now)|that.?s (all|it) for (now|today)|signing off|sign off for|call(ing)? it (a day|here)|end (this|the) (session|terminal|chat)|that.?s a wrap|i.?m (done|good) (here|for (now|today))|let.?s (close|wrap) (this|it|things)( (out|up))?)'
+TRIGGERS='(wrap(ping)? (this|it|things)? ?up|wrap up here|close (this|the) (terminal|session|chat|window)( (out|down))?|clos(e|ing) (this|it) out|done for (today|the day|now)|that.?s (all|it) for (now|today)|signing off|sign off for|call(ing)? it (a day|here)|end (this|the) (session|terminal|chat)|that.?s a wrap|i.?m (done|good) (here|for (now|today))|let.?s (close|wrap) (this|it|things)( (out|up))?|document everything|continuation prompt|continue (on )?(another|a different) day|resume (this|it)? ?(later|tomorrow|another day|on another)|hand ?off|(continue|keep going|keep working|pick(ing)? (this|it) up).{0,30}(new|fresh|another) (terminal|tab|window)|(new|fresh|another) (terminal|tab|window).{0,30}(continue|keep going|keep working|and (go|keep)))'
 
 grep -qE "$TRIGGERS" <<<"$LOWER" || exit 0
 
