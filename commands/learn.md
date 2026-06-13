@@ -1,89 +1,73 @@
-Recursive learning pass. The single job of this skill is to turn what just happened into durable behavior change for next time. It is token-heavy and run selectively — at the end of a substantive session, or when something surprising happened (a failure, a recovery, a new task type, repeated pushback).
+Recursive learning pass. Its job: turn what just happened into durable behavior change for next time — **primarily by capturing reusable playbooks so a problem solved once is never re-solved or re-explained**, and secondarily by hard-stopping a detectable mistake from recurring. Run at the end of a substantive session, or when something notable happened (you explained a procedure, the agent burned real time finding a working path, a failure/recovery, repeated pushback).
 
-**Scope discipline (read this first, it is the whole point):** session-close rituals tend to fail by sprawling — they grow status-file, bookkeeping, and handoff steps until they "do random stuff" and nobody runs them. `/learn` must NOT do that. It does ONE thing: extract learning and feed the verify flywheel. If you feel the urge to update a project status file, close a tracker, or write a handoff here — STOP, that belongs in a separate close command. Keep this skill small forever.
+**Scope discipline (read this first — it is the whole point).** This skill used to be a mistake-auditing journal: it re-read every claim, sorted misses into families, ran an escalation ladder, and grew a lesson registry. That produced *documentation, not behavior change* — a note in a file never changed the next session, because the only things that carry over are (1) what gets re-injected into context and (2) what a hook enforces. So this skill now does just two things well: **capture playbooks** and, when a real mistake recurs, **install a guard or sharpen the one salience line.** If you feel the urge to classify a family, update a registry, or write a per-claim audit table — STOP. That was the old shape. Keep this skill small forever.
 
-Location note: if running outside the slash-command loader, read this file from `~/.claude/commands/learn.md` and execute it.
-
-Paths used by this skill (portable defaults):
-- Memory directory: `~/.claude/memory/` — where durable `feedback_*.md` lessons live. Adjust if yours differs.
-- Flywheel checklist: `~/.claude/state/recursive-learning/verify-preflight.md` — injected at session start by `learn-preflight.sh`.
-- Run log: `~/.claude/state/learn/learn-runs.jsonl`.
+**Forward-only (read this too).** This skill reflects on the session that *just happened* — what you learned, fixed, or got corrected on, while it's in front of you. It does **NOT** mine, re-read, or audit past transcripts to score yourself. A backward audit-sample is a trap: it manufactures activity, costs a sweep every run, and measures the wrong axis. Learning happens going forward, not by grading history.
 
 ---
 
 ## Step 0 — Gate (don't run on nothing)
 
-Run only if the session was substantive: roughly ≥8 tool calls, OR ≥2 files changed, OR ≥1 real pushback from the user, OR a notable failure/recovery happened. If none apply, output `/learn: skipped (non-substantive session)` and stop. Don't perform the rest.
+Run only if the session was substantive — judge qualitatively, don't tally tool calls: you explained how to do something, the agent spent real effort finding a working path, a notable failure/recovery happened, or there was real pushback. If none apply, output `/learn: skipped (non-substantive session)` and stop.
 
-## Step 1 — Assertion Audit (THE CORE — do this most carefully)
+## Step A — Capture playbooks (THE CORE)
 
-Re-read your OWN messages this session and find every place you stated something as fact: "X exists / doesn't exist", "it's done", "that's sent", "the file has Y", "the data is empty", "this is a false positive", "tests pass", etc.
+Ask: **did I work out HOW to do something this session that I'd otherwise have to re-figure-out next time — or did the user explain a procedure they should never have to explain again?** Tells — I spent more than a call or two discovering a method, hit a "that path was blocked, this one worked" moment, found a non-obvious auth/tool/navigation path, or the user walked me through steps.
 
-For each such claim, tag it:
-- **Verified** — you had run the check (Read/Bash/grep/tool/screenshot) BEFORE asserting. Cite the check.
-- **Asserted-from-inference** — you reasoned it was true and stated it before checking. (Tell: the user asked "did you actually check?" or you only verified after they pushed.)
-- **Wrong** — it turned out false.
+**Capture bar (gated — do NOT capture trivia).** Save only when ONE holds: the user explained it, OR it cost real time / dead-ends, OR the user said "save this." Everything else: skip.
 
-Output a short table: `| claim | tag | the check I should have run first |`.
+For each that clears the bar, write or refresh a `reference_*.md` playbook in your memory/playbook dir:
+- **Index by TASK SHAPE, not the incident.** The title and any index pointer must read like the words I'd reach for next time — "pull the meeting notes for a call", "get the value needed to do a billing write op" — NOT "that thing on 6/3". This is what makes retrieval actually fire.
+- Record the **working path** (exact commands / clicks / tool sequence) AND the **dead-ends to skip**, so next time's re-discovery cost is zero.
+- If a playbook already covers it, **deepen that one** — don't spawn a duplicate.
+- **Wire it to fire at point-of-need (the retrieval upgrade — do this or the file stays inert).** A playbook only changes behavior if it gets re-injected at the moment it's needed. Prompt-time recall covers the case where my *prompt* keyword-matches. But if the playbook applies at a **mid-task action** — about to run a command, write to a path, or call a tool — there's no prompt to match, so bind it directly: if the playbook has a *detectable trigger* (a Bash command pattern, a file-path pattern, or an exact tool name), append an `inform_*` spec to `~/.claude/state/guards/inform-specs.json`. The `mem-surface.sh` PreToolUse hook then surfaces this playbook the instant I reach for that action next time — no keyword luck required. This is the inform-side twin of Step B's deny guard.
+  ```bash
+  jq '. += [{"type":"inform_on_bash_regex","pattern":"<anchored ERE>","memory":"reference_xxx.md","note":"one-line why/what"}]' \
+     ~/.claude/state/guards/inform-specs.json > ~/.claude/state/guards/.is.$$ \
+     && mv ~/.claude/state/guards/.is.$$ ~/.claude/state/guards/inform-specs.json
+  # other types: {"type":"inform_on_path_regex","path_regex":"<ERE>",...}  |  {"type":"inform_on_tool","tool":"<exact tool_name>",...}
+  ```
+  `memory` is the file path RELATIVE to your memory dir. Prefer binding to an **early** action in the workflow (a first read/list), so the runbook lands *before* the consequential write — the hook informs, it doesn't block. No detectable trigger? Skip this; prompt-time recall is the only carrier for purely conversational playbooks. (`inform_on_tool` only fires for tools `mem-surface` is registered on — `Write`/`Edit`/`MultiEdit`/`Bash` by default; to surface on another tool, add its exact name to the `mem-surface` matcher in `settings.json` first.)
 
-The `Asserted-from-inference` and `Wrong` rows are the gold — but what you write down is **the reason, not the incident**. Writing "when about to claim a data store is empty → query it directly" is a patch for one situation that will never transfer to the next, differently-shaped mistake. Write down the **root reason you made the mistake**, generalized to a rule that fires everywhere that reason applies — yet still concrete enough to act on. Calibrate the altitude:
-- too abstract (useless): "be more careful", "verify more".
-- too specific (a patch, won't transfer): "when claiming a data store is empty, open it first".
-- right (the reason, still actionable): "when you reach a conclusion by inference instead of direct observation — especially when you feel confident — treat it as a hypothesis and run the one direct check before stating it as fact".
+## Step B — Mistake → minimal (no journal, no taxonomy)
 
-The incident is just the example that taught you the reason. **Persist the reason; cite the incident as its example.** And when a new miss shares a root reason with a lesson you already have, do NOT add a new line — **deepen the existing one** (sharpen its wording, bump its recurrence count). That consolidation is the "build on top of it" recursion; a growing list of narrow incidents is the failure mode.
+Was there a notably-wrong **action** this session (not just an imperfect phrasing)? If no, skip this step entirely.
 
-## Step 2 — Correction mining
+**Also — user corrections.** Did the user push back on or correct your behavior this session (incl. soft signals: "actually", "instead", "hmm", or re-stating an ask they already made)? If it's a correction worth not repeating, generalize its ROOT (not the surface complaint) into a rule in your memory dir — and check for an existing rule to refine before creating a duplicate. Judgment, not an exhaustive per-message audit.
 
-Re-read every USER message. Flag pushback signals (direct "no/don't/stop/why", soft "actually/instead/I would have", repeated re-statements, frustration, and especially "did you check / are you sure"). For each: generalize to the underlying pattern, not the surface complaint. Search your memory directory (`~/.claude/memory/feedback_*.md`) for an existing rule — if one exists, this is a refinement (Step 4), not a new file.
+If yes, classify the trigger's **detectability** — that decides whether you can actually prevent recurrence:
+- **Detectable** (an exact file path you must not write, or a Bash command pattern you must not run) → **install a hard guard NOW**, on first identification. Append a spec to `~/.claude/state/guards/guard-specs.json`; the `learn-guard.sh` PreToolUse hook reads it and DENIES the matching call. This is the *only* level that genuinely makes a mistake "never again."
+  ```bash
+  jq '. += [{"type":"deny_write_path","path":"/ABS/PATH","reason":"why + what to do instead"}]' \
+     ~/.claude/state/guards/guard-specs.json > ~/.claude/state/guards/.gs.$$ \
+     && mv ~/.claude/state/guards/.gs.$$ ~/.claude/state/guards/guard-specs.json
+  # command form: {"type":"deny_bash_regex","pattern":"<portable, ANCHORED ERE>","reason":"..."}
+  ```
+  Use the **absolute** path (exact match); keep regexes **portable and anchored** so they can't over-block.
+- **Fuzzy** (a judgment call, no clean signature) → first decide **scope**. Is the lesson *universal* (about how you reason about any claim or state — applies to any session regardless of what's being worked on), or *project/tool-scoped* (it names a specific product, tool, file format, or workflow)?
+  - **Universal** → **sharpen the single matching line** in `~/.claude/state/recursive-learning/verify-preflight.md`. Keep that file to **~5 lines, one sentence each, zero project examples** — sharpen the existing line, never add a per-incident bullet, never let a line grow past one sentence. Be honest: this is salience-only (less likely, not impossible).
+  - **Project/tool-scoped** → it belongs in that project's memory or the relevant `reference_*` playbook, which prompt-time recall already surfaces on mention. That's **Step A's job — deepen the playbook there.** Do **NOT** copy it into the global preflight: that is exactly what bloats it — a lossy duplicate of a lesson already homed, broadcast to every unrelated session.
 
-## Step 3 — Persist so it changes behavior (not just a log)
+## Step C — Close the dedup loop (every run — cheap)
 
-Two destinations:
+Capture without maintenance just grows an unmaintained pile: the corpus only grows, and retrieval degrades as it bloats. This step is the cheap maintenance half. It is surface-and-propose only — you decide, then apply carefully.
 
-1. **New/refined memory** for genuinely new lessons → a `feedback_*.md` file in your memory directory. Use whatever frontmatter/indexing convention your setup expects (this skill is agnostic to it).
+If you run a periodic consolidation pass (e.g. a weekly job that clusters near-duplicate memories and writes merge proposals), this is where you consume it: read the newest proposal, surface ONE line — *"M pending memory merges (+K prune candidates) — apply now?"* — and only on a yes, apply each merge with discipline:
+- Back up every touched file; never delete irreversibly — move superseded files to an `archive/` dir.
+- **Verify each merge preserves all nuance + every cross-link before applying.** A second read-only review pass (a different model is ideal) is cheap here; use it, but spot-verify its concrete file claims (a reviewer can fabricate line facts). Never auto-merge on a digest's say-so alone.
+- Pick the survivor by inbound-reference count; repoint inbound refs; collapse duplicate index lines.
 
-2. **The verify flywheel** → append/refresh the rolling checklist at `~/.claude/state/recursive-learning/verify-preflight.md`. Keep it to the **top 3–5 recurring verification misses, one line each.** This file is injected into context at the start of every session by `learn-preflight.sh`, which is what makes verify-first *active* instead of buried. Demote stale entries; promote whatever bit this session.
-
-**First, classify the trigger's DETECTABILITY — this decides whether you can actually guarantee non-recurrence.**
-
-**Detectable** — the trigger is an exact thing a shell hook can see: a file path you must never write, or a Bash command pattern you must never run. → **Install a hard guard NOW, on the FIRST identification — do not wait for a 2nd occurrence.** Append a spec to `~/.claude/state/guards/guard-specs.json`; the pre-installed `learn-guard.sh` PreToolUse hook reads it and DENIES the matching call (the tool is blocked before it runs). This is the **only** level that genuinely makes a mistake "never again." Recipe (atomic):
-```bash
-jq '. += [{"type":"deny_write_path","path":"/ABS/PATH","reason":"why + what to do instead"}]' \
-   ~/.claude/state/guards/guard-specs.json > ~/.claude/state/guards/.gs.$$ \
-   && mv ~/.claude/state/guards/.gs.$$ ~/.claude/state/guards/guard-specs.json
-# command form:  {"type":"deny_bash_regex","pattern":"<portable, ANCHORED ERE>","reason":"..."}
-```
-Rules: store the **absolute** path (match is exact). Keep regexes **portable** (BSD + GNU grep — avoid `\b` and fancy classes if unsure) and **anchored**/specific so they can't over-block a legit command. Label the lesson **`hard-blocked`**. The guard is data-only — you append a line; no new code runs.
-
-**Fuzzy** — a judgment with no clean signature (e.g. "asserted from inference before checking"). A hook cannot reliably detect it, so it **cannot be hard-guaranteed** — be honest, label it **`salience-only`** (less likely, not impossible). Use the soft ladder, moving UP a level on each recurrence (re-noting at the same level is the failure mode — it feels like progress and changes nothing):
-- **L0 one-off** → a `feedback_*.md` memory.
-- **L1 recurred despite the memory** → promote to `verify-preflight.md` (injected at session start), tag `(seen Nx)`.
-- **L2 recurred AGAIN while on the preflight** → the soft layer is provably failing. Best remaining move is the nearest *proxy* guard (e.g. a claim-evidence Stop-check that flags a confident state-claim with no verifying tool-call that turn). **Describe it and ASK before building** (Step 4 rules).
-
-**Honest-effectiveness check (required output, no overclaiming):** for each recurring lesson, state its label (`hard-blocked` = genuinely prevented; `salience-only` = less likely) and level. Never call a `salience-only` lesson "fixed" — the only proof is its recurrence count trending to zero in the run log. A lesson reaching L2 IS evidence the soft layer is failing — surface it loudly.
-
-## Step 4 — Rule refinement (ask before changing load-bearing rules)
-
-Any stored rule that *misfired* this session (got cited, then the user said "doesn't apply / too broad / stop citing that")? Propose tighten / exception / split / soften / delete — one-line context + proposed diff. **Apply only on explicit approval.** Stored rules are load-bearing; a bad refinement is worse than none.
-
-## Step 5 — Skill fix (only if one misfired this session)
-
-If a skill/command invoked this session needed manual steering or produced a bad result, read its file and fix the specific gap. Skip silently if none.
+No consolidation pass yet? Skip this step. Keep it conservative: surface similarity ≠ duplication; when a cluster is genuinely two lessons, leave it.
 
 ## Output
 
 ```
 /learn
-- Assertion audit: N claims | verified A | inference B | wrong C
-- New/refined memories: N  (slug — one line each)
-- Preflight: now N lines (promoted: ..., recurrence counts updated)
-- Recurring → level: <lesson> L0→L1 (to preflight) | <lesson> L1→L2 (soft FAILED, hardening proposed below) | "none"
-- Hardening proposed (awaiting approval): <proposed hook + trigger> | "none"
-- Rule changes proposed (awaiting approval): ... | "none"
-- Skill fixes: ... | "none"
-- Effectiveness (honest): which lessons are at which level; proof is the recurrence count trending to 0 — NOT "fixed"
-- Still open: one line, or "nothing"
+- Playbooks captured/refreshed: N (slug — one line each) | none
+- Mistake → guard installed: <path/pattern> | salience line sharpened | none
+- Memory maintenance: M merges applied (date) | K pending — surfaced | none pending
+- Still open: one line | nothing
 ```
 
-Then append one JSON line to `~/.claude/state/learn/learn-runs.jsonl`: `{ts, session, claims, inference_misses, wrong, new_memories, recurring_items: [{lesson, level}]}`. The per-lesson `level` is what makes the trend real: if the same `lesson` keeps reappearing and climbing to L2, the soft flywheel is provably failing for that lesson and the next `/learn` must propose a hook, not another note.
+Then append one JSON line to your run log (`~/.claude/state/learn/learn-runs.jsonl`):
+`{ts, session, playbooks_captured, guard_installed, salience_sharpened}`

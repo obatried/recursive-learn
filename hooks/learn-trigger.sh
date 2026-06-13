@@ -56,6 +56,6 @@ jq -nc \
 jq -nc '{
   hookSpecificOutput: {
     hookEventName: "UserPromptSubmit",
-    additionalContext: "[LEARN REMINDER — soft] Wrap-up signal detected. If this session was substantive (real work, a failure/recovery, a new task type, or any pushback from the user), consider running Skill({skill: \"learn\"}) before closing — it does an assertion audit (where did I assert before verifying?), saves the lessons, and updates the verify-first preflight so next session starts sharper. Skip it if the session was light. This is a nudge, not a gate — never block on it. Throttled once per session."
+    additionalContext: "[LEARN REMINDER — soft] Wrap-up signal detected. If this session was substantive (you explained a procedure, the agent spent real effort finding a working path, a failure/recovery, or pushback from the user), consider running Skill({skill: \"learn\"}) before closing — it captures reusable playbooks so a problem solved once is never re-solved or re-explained, and installs a deny guard (or sharpens the verify-first preflight) for any real mistake. Skip it if the session was light. This is a nudge, not a gate — never block on it. Throttled once per session."
   }
 }'

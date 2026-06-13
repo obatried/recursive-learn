@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # recursive-learn installer.
-# Copies the skill + hooks into ~/.claude, seeds the verify-first checklist, and
-# registers the two SOFT hooks in ~/.claude/settings.json. Idempotent. Backs up
-# settings.json before editing and validates the JSON after. Never deletes data.
+# Copies the skill + hooks into ~/.claude, seeds the verify-first checklist + the
+# (empty) guard/inform spec files, and registers the SOFT + guard hooks in
+# ~/.claude/settings.json. Idempotent. Backs up settings.json before editing and
+# validates the JSON after. Never deletes data.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -11,22 +12,25 @@ COMMANDS="${CLAUDE}/commands"
 HOOKS="${CLAUDE}/hooks"
 STATE_RL="${CLAUDE}/state/recursive-learning"
 STATE_LEARN="${CLAUDE}/state/learn"
+GUARDS="${CLAUDE}/state/guards"
 SETTINGS="${CLAUDE}/settings.json"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 required"; exit 1; }
 
-mkdir -p "$COMMANDS" "$HOOKS" "$STATE_RL" "$STATE_LEARN"
+mkdir -p "$COMMANDS" "$HOOKS" "$STATE_RL" "$STATE_LEARN" "$GUARDS"
 
-cp "$SRC/commands/learn.md"          "$COMMANDS/learn.md"
-cp "$SRC/hooks/learn-trigger.sh"     "$HOOKS/learn-trigger.sh"
-cp "$SRC/hooks/learn-preflight.sh"   "$HOOKS/learn-preflight.sh"
-cp "$SRC/hooks/learn-guard.sh"       "$HOOKS/learn-guard.sh"
-chmod +x "$HOOKS/learn-trigger.sh" "$HOOKS/learn-preflight.sh" "$HOOKS/learn-guard.sh"
+cp "$SRC/commands/learn.md"             "$COMMANDS/learn.md"
+cp "$SRC/hooks/learn-trigger.sh"        "$HOOKS/learn-trigger.sh"
+cp "$SRC/hooks/learn-preflight.sh"      "$HOOKS/learn-preflight.sh"
+cp "$SRC/hooks/learn-guard.sh"          "$HOOKS/learn-guard.sh"
+cp "$SRC/hooks/mem-surface.sh"          "$HOOKS/mem-surface.sh"
+cp "$SRC/hooks/commit-on-red-guard.sh"  "$HOOKS/commit-on-red-guard.sh"
+chmod +x "$HOOKS/learn-trigger.sh" "$HOOKS/learn-preflight.sh" "$HOOKS/learn-guard.sh" \
+         "$HOOKS/mem-surface.sh" "$HOOKS/commit-on-red-guard.sh"
 
-# Seed the guard specs only if absent (empty array => the guard is a total no-op).
-GUARDS="$CLAUDE/state/guards"
-mkdir -p "$GUARDS"
-[ -f "$GUARDS/guard-specs.json" ] || cp "$SRC/state/guard-specs.seed.json" "$GUARDS/guard-specs.json"
+# Seed the spec files only if absent (empty array => the hook is a total no-op).
+[ -f "$GUARDS/guard-specs.json" ]  || cp "$SRC/state/guard-specs.seed.json"  "$GUARDS/guard-specs.json"
+[ -f "$GUARDS/inform-specs.json" ] || cp "$SRC/state/inform-specs.seed.json" "$GUARDS/inform-specs.json"
 
 # Seed the checklist only if absent — never clobber a user's accumulated one.
 if [ ! -f "$STATE_RL/verify-preflight.md" ]; then
@@ -53,28 +57,37 @@ hooks = d.setdefault("hooks", {})
 if not isinstance(hooks, dict):
     sys.exit("settings.json 'hooks' is not an object; refusing to edit. Fix it by hand.")
 
-def ensure(event, command):
-    arr = hooks.setdefault(event, [])
+def _has(event, command, matcher=None):
+    arr = hooks.get(event, [])
     if not isinstance(arr, list):
         sys.exit(f"settings.json hooks.{event} is not a list; refusing to edit. Fix it by hand.")
     for e in arr:
-        if isinstance(e, dict):
+        if isinstance(e, dict) and (matcher is None or e.get("matcher") == matcher):
             for hc in e.get("hooks", []) or []:
                 if isinstance(hc, dict) and hc.get("command") == command:
-                    return False
-    arr.append({"hooks": [{"type": "command", "command": command}]})
+                    return True
+    return False
+
+def ensure(event, command, matcher=None):
+    """Add {matcher?, hooks:[{command}]} to an event if that command isn't already present."""
+    if _has(event, command, matcher):
+        return False
+    arr = hooks.setdefault(event, [])
+    entry = {"hooks": [{"type": "command", "command": command}]}
+    if matcher is not None:
+        entry = {"matcher": matcher, **entry}
+    arr.append(entry)
     return True
 
-a = ensure("UserPromptSubmit", "$HOME/.claude/hooks/learn-trigger.sh")
-b = ensure("SessionStart",     "$HOME/.claude/hooks/learn-preflight.sh")
-# PreToolUse guard needs a matcher so it only runs on the relevant tools.
-g_arr = hooks.setdefault("PreToolUse", [])
-if not isinstance(g_arr, list):
-    sys.exit("settings.json hooks.PreToolUse is not a list; refusing to edit. Fix it by hand.")
-g_cmd = "$HOME/.claude/hooks/learn-guard.sh"
-g = not any(isinstance(e, dict) and any(isinstance(hc, dict) and hc.get("command") == g_cmd for hc in (e.get("hooks", []) or [])) for e in g_arr)
-if g:
-    g_arr.append({"matcher": "Write|Edit|MultiEdit|Bash", "hooks": [{"type": "command", "command": g_cmd}]})
+H = "$HOME/.claude/hooks"
+PRE = "Write|Edit|MultiEdit|Bash"
+results = {
+  "UserPromptSubmit/learn-trigger":  ensure("UserPromptSubmit", f"{H}/learn-trigger.sh"),
+  "SessionStart/learn-preflight":    ensure("SessionStart",     f"{H}/learn-preflight.sh"),
+  "PreToolUse/learn-guard":          ensure("PreToolUse",       f"{H}/learn-guard.sh",         PRE),
+  "PreToolUse/mem-surface":          ensure("PreToolUse",       f"{H}/mem-surface.sh",         PRE),
+  "PreToolUse/commit-on-red-guard":  ensure("PreToolUse",       f"{H}/commit-on-red-guard.sh", "Bash"),
+}
 
 # Atomic write: temp file in the same dir, validate, then rename over the target.
 dirn = os.path.dirname(os.path.abspath(p)) or "."
@@ -88,12 +101,12 @@ except BaseException:
     try: os.unlink(tmp)
     except OSError: pass
     raise
-print(f"UserPromptSubmit hook {'added' if a else 'already present'}")
-print(f"SessionStart hook {'added' if b else 'already present'}")
-print(f"PreToolUse guard hook {'added' if g else 'already present'}")
+for k, added in results.items():
+    print(f"{k}: {'added' if added else 'already present'}")
 print("settings.json valid")
 PY
 
 echo
 echo "Installed. The verify-first checklist injects on your NEXT session start."
 echo "Run /learn at the end of a substantive session (or when you say 'wrapping up')."
+echo "Point mem-surface at your playbook dir with CLAUDE_MEMORY_DIR if it isn't ~/.claude/memory."
