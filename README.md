@@ -77,7 +77,7 @@ The flip side is **supersede = propagate**: when a session produces evidence tha
 
 ## Install
 
-Requires `python3` (for the installer's settings.json edit) and `jq` (the hooks no-op gracefully without it, so they never break your session — but they only *do* anything with `jq` present).
+Requires `python3` (for the installer's settings.json edit) and `jq`. Only `python3` is enforced — the installer *warns* about a missing `jq` and proceeds, since the hooks no-op gracefully without it and can never break your session. But nothing actually works until `jq` is present: the lint exits 2 and the spec-append snippets don't run.
 
 ```bash
 git clone https://github.com/obatried/recursive-learn

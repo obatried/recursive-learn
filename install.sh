@@ -18,6 +18,17 @@ SETTINGS="${CLAUDE}/settings.json"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 required"; exit 1; }
 
+# jq isn't required to INSTALL, but without it the hooks no-op, inform-specs-lint.sh
+# hard-fails, and the /learn spec-append snippets don't work — i.e. a "successful"
+# install would be a nonfunctional one. Warn loudly rather than report a false green.
+command -v jq >/dev/null 2>&1 || cat <<'WARN'
+⚠️  jq not found. Installation will proceed, but until you install jq:
+      - the hooks silently no-op (they never break your session, but they do nothing)
+      - inform-specs-lint.sh exits 2
+      - the /learn snippets that append guard/inform specs will not run
+    Install it (brew install jq / apt install jq) and no re-install is needed.
+WARN
+
 mkdir -p "$COMMANDS" "$HOOKS" "$SCRIPTS" "$STATE_RL" "$STATE_LEARN" "$GUARDS"
 
 cp "$SRC/commands/learn.md"             "$COMMANDS/learn.md"

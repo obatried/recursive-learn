@@ -43,9 +43,11 @@ For each capture that clears gates 1-2 (and is routed by gate 3), write or refre
      ~/.claude/state/guards/inform-specs.json > ~/.claude/state/guards/.is.$$ \
      && mv ~/.claude/state/guards/.is.$$ ~/.claude/state/guards/inform-specs.json
   # other types: {"type":"inform_on_path_regex","path_regex":"<ERE>",...}  |  {"type":"inform_on_tool","tool":"<exact tool_name>",...}
-  ~/.claude/scripts/inform-specs-lint.sh   # MUST pass after appending. A non-zero exit = your new entry
-  # COLLIDES with an existing (type+trigger+memory) — do NOT leave a 2nd row. DEEPEN the existing entry's
-  # note in place instead (the "deepen, don't duplicate" rule). Same trigger -> DIFFERENT memory is fine (fan-out).
+  ~/.claude/scripts/inform-specs-lint.sh   # MUST pass after appending. Read the output, don't just check
+  # the code: exit 1 = an ERROR line (a COLLISION on type+trigger+memory, or a malformed entry — unknown
+  # type / empty trigger / empty memory); exit 2 = the file is unreadable or jq is missing. On a collision
+  # do NOT leave a 2nd row — DEEPEN the existing entry's note in place ("deepen, don't duplicate").
+  # Same trigger -> DIFFERENT memory is fine (intentional fan-out) and never reported as an error.
   ```
   `memory` is the file path RELATIVE to your memory dir. Prefer binding to an **early** action in the workflow (a first read/list), so the runbook lands *before* the consequential write — the hook informs, it doesn't block. No detectable trigger? Skip this; prompt-time recall is the only carrier for purely conversational playbooks.
 

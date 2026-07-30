@@ -51,8 +51,12 @@ if [ -n "$DIGEST_DATE" ]; then
   fi
   SRC="$REMINDERS/memory-consolidate-$DIGEST_DATE.md"
   if [ -f "$SRC" ]; then
-    mkdir -p "$ACTIONED"
-    mv "$SRC" "$ACTIONED/"
+    # Fail LOUD: a silent archive failure makes the digest look handled while it
+    # is still live, so it re-surfaces forever and the "it's done" report is a lie.
+    if ! mkdir -p "$ACTIONED" || ! mv "$SRC" "$ACTIONED/"; then
+      echo "learn-finalize: FAILED to archive $SRC -> $ACTIONED/ (digest is still live)" >&2
+      exit 1
+    fi
     echo "archived digest -> $ACTIONED/memory-consolidate-$DIGEST_DATE.md"
   else
     echo "learn-finalize: no live digest for $DIGEST_DATE (nothing to archive)"
@@ -64,17 +68,29 @@ if [ "$DO_LOG" -eq 1 ]; then
   PLAYBOOKS="$(printf '%s' "$PLAYBOOKS" | tr -cd '0-9')"; [ -z "$PLAYBOOKS" ] && PLAYBOOKS=0
   GUARD="$(norm_bool "$GUARD")"
   SALIENCE="$(norm_bool "$SALIENCE")"
-  mkdir -p "$(dirname "$LOG")"
+  # Fail LOUD on a write failure. Reporting "logged" after the append silently
+  # failed is a false green — the exact class of bug commit-on-red-guard exists
+  # to catch — so every step here is checked before the success line prints.
+  if ! mkdir -p "$(dirname "$LOG")"; then
+    echo "learn-finalize: FAILED to create $(dirname "$LOG") — run NOT logged" >&2
+    exit 1
+  fi
   TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if command -v jq >/dev/null 2>&1; then
+    ok=0
     jq -nc \
       --arg ts "$TS" --arg s "$SESSION" \
       --argjson p "$PLAYBOOKS" --argjson g "$GUARD" --argjson sal "$SALIENCE" \
       '{ts:$ts, session:$s, playbooks_captured:$p, guard_installed:$g, salience_sharpened:$sal, recurring_items:[]}' \
-      >> "$LOG"
+      >> "$LOG" || ok=1
   else
+    ok=0
     printf '{"ts":"%s","session":"%s","playbooks_captured":%s,"guard_installed":%s,"salience_sharpened":%s,"recurring_items":[]}\n' \
-      "$TS" "$SESSION" "$PLAYBOOKS" "$GUARD" "$SALIENCE" >> "$LOG"
+      "$TS" "$SESSION" "$PLAYBOOKS" "$GUARD" "$SALIENCE" >> "$LOG" || ok=1
+  fi
+  if [ "$ok" -ne 0 ]; then
+    echo "learn-finalize: FAILED to append to $LOG — run NOT logged" >&2
+    exit 1
   fi
   echo "logged learn run -> $LOG (session=$SESSION playbooks=$PLAYBOOKS guard=$GUARD salience=$SALIENCE)"
 fi
