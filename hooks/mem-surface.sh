@@ -15,6 +15,8 @@
 #   {"type":"inform_on_bash_regex","pattern":"ERE","memory":"file.md","note":"..."}     -> Bash command matches
 #   {"type":"inform_on_tool","tool":"<exact tool_name>","memory":"file.md","note":"..."} -> tool name matches exactly
 # `memory` is a path RELATIVE to your memory/playbook dir; `note` is an optional one-line why/what.
+# Patterns/notes must be single-line: a raw newline inside a pattern makes grep treat
+# it as TWO patterns (silent over-match), so extraction flattens newlines to spaces.
 #
 # CONFIG: point MEMORY_DIR at wherever your playbook/memory markdown files live.
 #   Override with the CLAUDE_MEMORY_DIR env var; default below is ~/.claude/memory.
@@ -28,6 +30,14 @@
 #   never brick a tool call.
 # Three controls bound the noise: exact/explicit matching, once-per-memory-per-session
 # throttle, and a max of 2 surfaced per call.
+#
+# PERF: the spec scan is ONE jq pass emitting \x1f-joined records (raw fields, never
+# @tsv, so regex backslashes survive) plus a pure-bash loop; grep only spawns for regex
+# entries when there is actually a CMD/TARGET to match. The earlier per-index loop
+# spawned 4 jq processes per entry (~3s/call at 120 specs; now ~0.1s). That headroom is
+# what makes registering this hook with matcher "*" viable — see install.sh — so an
+# inform_on_tool spec can fire for ANY tool; non-Bash/Write tools skip every regex
+# entry and cost only the single jq pass.
 
 set -uo pipefail
 exec 2>/dev/null
@@ -54,32 +64,36 @@ case "$TOOL" in
   Bash)                 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""') ;;
 esac
 
-# Collect matching "memory<TAB>note" pairs. Iterate by index and pull patterns RAW
-# (jq -r, never @tsv) so regex backslashes (\b, \d, \.) are not corrupted.
+# ONE jq pass over the specs: emit "type \x1f pattern \x1f tool \x1f memory \x1f note"
+# per entry. Fields are raw (jq -r join, never @tsv) so regex backslashes (\b, \d, \.)
+# survive; newlines/tabs inside fields are flattened so they can't split records or the
+# downstream tab-separated MATCHES format.
+RECORDS=$(jq -r '.[] | [
+    (.type // ""),
+    ((.pattern // .path_regex // "") | gsub("[\n\t]"; " ")),
+    (.tool // ""),
+    (.memory // ""),
+    ((.note // "") | gsub("[\n\t]"; " "))
+  ] | join("\u001f")' "$SPECS")
+[ -z "$RECORDS" ] && exit 0
+
+# Collect matching "memory<TAB>note" pairs (pure bash; grep only on regex entries).
 MATCHES=""
-N=$(jq 'length' "$SPECS")
-i=0
-while [ "$i" -lt "${N:-0}" ]; do
-  TYPE=$(jq -r ".[$i].type // \"\"" "$SPECS")
-  mem=$(jq -r ".[$i].memory // \"\"" "$SPECS")
-  note=$(jq -r ".[$i].note // \"\"" "$SPECS")
+while IFS=$'\x1f' read -r TYPE pat want mem note; do
+  [ -n "$mem" ] || continue
   hit=0
   case "$TYPE" in
     inform_on_tool)
-      want=$(jq -r ".[$i].tool // \"\"" "$SPECS")
       [ -n "$want" ] && [ "$want" = "$TOOL" ] && hit=1 ;;
     inform_on_path_regex)
-      pat=$(jq -r ".[$i].path_regex // \"\"" "$SPECS")
       [ -n "$pat" ] && [ -n "$TARGET" ] && grep -qE "$pat" <<<"$TARGET" && hit=1 ;;
     inform_on_bash_regex)
-      pat=$(jq -r ".[$i].pattern // \"\"" "$SPECS")
       [ -n "$pat" ] && [ -n "$CMD" ] && grep -qE "$pat" <<<"$CMD" && hit=1 ;;
   esac
-  if [ "$hit" -eq 1 ] && [ -n "$mem" ]; then
+  if [ "$hit" -eq 1 ]; then
     MATCHES="${MATCHES}${mem}	${note}"$'\n'
   fi
-  i=$((i+1))
-done
+done <<< "$RECORDS"
 
 [ -z "$MATCHES" ] && exit 0
 

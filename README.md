@@ -43,19 +43,35 @@ Not all mistakes are equal, and the tool refuses to pretend otherwise. The class
 - **Detectable but only a preference / style / pacing** → a regex *could* block it, but it **shouldn't** — a reversible preference must never require editing JSON to escape. It gets a soft, overridable `inform` surface instead.
 - **Fuzzy** (a judgment call, "asserted before verifying") → no shell hook can reliably detect it, so it **cannot be guaranteed** — only made *less likely* via salience. The tool never calls a fuzzy lesson "fixed."
 
-The corollary the redesign learned the hard way: **don't pour fuzzy lessons into the preflight**, and **don't ossify a one-time preference into a forever-global deny**. Both bloat the system with rules that fight you later. Keep the preflight to ~5 short lines; sharpen the matching line, don't add a bullet.
+The corollary the redesign learned the hard way: **don't pour fuzzy lessons into the preflight**, and **don't ossify a one-time preference into a forever-global deny**. Both bloat the system with rules that fight you later. As of v3 the preflight is **frozen by default** — its ~5 lines are saturated, and the only admissible edit is one where the old wording, read literally, would have *permitted* the mistake that just happened.
+
+## The capture bar: three gates
+
+The failure mode of any capture loop is that it only ever grows. "It's true and it's about this workflow" passes everything, so the playbook set bloats until retrieval degrades and every stage file is a tax. v3 puts three gates in front of a capture — the first two decide **whether** to write, the third decides **where**:
+
+1. **Cost-of-not-knowing.** Save only if the user explained it, it cost real time / dead-ends, **it fails silently** (no error, wrong output — this counts even when you caught it instantly and lost zero time), or the user said "save this." A true-but-tiny nuance that costs nothing and fails *loudly* is not a capture. Neither is a struggle that was situation-specific and won't recur.
+2. **Second-use.** Before creating a new *re-injected* entry (one with its own `description:` competing for retrieval), write one sentence naming a concrete, **different** future task where that description would match — and that sentence may contain **no proper noun, ID, or number that exists only in this session.** Can't write it? The lesson isn't general enough to be re-injected: fold it into the body of the playbook that already owns the workflow, or drop it.
+3. **Fire-condition.** Does the line fire on *every* run of the workflow, or only on a *symptom* (one endpoint's error, a retry, a weird input)? Every run → the stage file. Symptom-only → an on-demand `recovery/` shelf, titled with the symptom a cold operator would search for. **This is the one that gets skipped**: stage files are read in full on every run, so an append there is a permanent per-run tax, while the shelf costs nothing until the symptom fires. One dogfooded skill grew **+26% in 12 days** — 199 new lines into always-read stages, 2 into `recovery/`.
+
+## Contradictions are escalated, never resolved
+
+Once you have more than a couple of playbook files on one pipeline, two of them eventually prescribe **opposite actions for the same step** — and whichever one the agent happened to read silently becomes policy. `/learn` refuses to break that tie: no newest-wins, no "the file already open", no "the more detailed one." It **blocks the write to both files**, finishes the rest of the pass, and surfaces the conflict with both rules quoted, the step where they collide, and its own read plus the evidence for it. You decide; it brings the analysis so you don't have to reconstruct it. An unresolved tie stays unresolved and re-surfaces next run.
+
+The flip side is **supersede = propagate**: when a session produces evidence that an existing rule is *wrong*, updating one file is not done. `grep -ril` the old rule's distinctive strings across the whole live doc set and fix every site in the same act — otherwise the stale copy wins the next time a different file gets read first.
 
 ## What's in the box
 
 | File | Role |
 |---|---|
-| `commands/learn.md` | The skill. **A** capture playbooks (the core), **A2** fold a graded review's named defects into the right checklist, **B** mistake → harm-class-gated guard / inform / salience, **C** close the dedup loop. Forward-only; no audit journal, no taxonomy, no registry. |
-| `hooks/mem-surface.sh` | `PreToolUse` (**soft, inform-only**). Surfaces the playbook bound to a command/path/tool you're about to use. Reads `inform-specs.json`. Never blocks; never changes permissions. |
+| `commands/learn.md` | The skill. **0.5** escalate doc contradictions, **A** capture playbooks behind the three gates (the core), **A2** fold a graded review's named defects into the right checklist, **B** mistake → harm-class-gated guard / inform / salience, **C** drain the maintenance reports. Forward-only; no audit journal, no taxonomy, no registry. |
+| `hooks/mem-surface.sh` | `PreToolUse` (**soft, inform-only**). Surfaces the playbook bound to a command/path/tool you're about to use. Reads `inform-specs.json`. Never blocks; never changes permissions. Registered on **all** tools. |
 | `hooks/learn-guard.sh` | `PreToolUse` (**hard, fail-open on error**). Reads `guard-specs.json` and **denies** a tool call matching a guard `/learn` installed for a previously-corrected, *detectable* mistake. No-op until a spec exists. |
 | `hooks/commit-on-red-guard.sh` | `PreToolUse(Bash)` example guard. Catches a `git commit` joined to a test/check by an unconditional operator (`;`, `\|\|`, `&`) so the commit fires even on red. Ships in **log mode** — flip to enforce once the log shows the false-alarm rate is low. |
 | `hooks/learn-preflight.sh` | `SessionStart` (**soft**). Injects the verify-first checklist at session start. |
 | `hooks/learn-trigger.sh` | `UserPromptSubmit` (**soft**). Fires once/session when you signal you're wrapping up → nudges "consider `/learn`." Never blocks. |
-| `state/verify-preflight.seed.md` | Starter checklist — ~5 universal verification principles, one line each. |
+| `scripts/inform-specs-lint.sh` | Collision linter for `inform-specs.json`. The spec file is append-only, so duplicate triggers pointing at the same playbook accumulate and their `note` text silently **drifts apart** (one stale, one current). Run after every append; a same-trigger→*different* playbook fan-out is allowed. |
+| `scripts/learn-finalize.sh` | Fixed-path closeout: appends the run log and archives a handled consolidation digest. Exists so `/learn` never hand-composes a multi-line shell blob — that blob can't match a Bash prefix-allow rule, so it re-prompts for approval on every single run. |
+| `state/verify-preflight.seed.md` | Starter checklist — ~5 universal verification principles, one line each. **Frozen by default** (see Step B). |
 | `state/guard-specs.seed.json` | Starter (empty) deny list. Empty = the guard is a total no-op. |
 | `state/inform-specs.seed.json` | Starter (empty) inform list for `mem-surface`. Empty = no-op. |
 
@@ -69,16 +85,24 @@ cd recursive-learn
 ./install.sh        # copies the skill + hooks into ~/.claude and registers the hooks
 ```
 
-The installer backs up `settings.json` first and validates the JSON after. To uninstall, remove the hook entries from `~/.claude/settings.json` and delete the copied files.
+The installer backs up `settings.json` first and validates the JSON after. It's idempotent, and it *migrates* an older narrow `mem-surface` registration to the `"*"` matcher rather than leaving a duplicate behind. To uninstall, remove the hook entries from `~/.claude/settings.json` and delete the copied files.
+
+**Allowlist the two helper scripts** so `/learn`'s closeout doesn't prompt on every run — in `~/.claude/settings.json` under `permissions.allow`:
+
+```
+Bash(~/.claude/scripts/learn-finalize.sh:*)
+Bash(~/.claude/scripts/inform-specs-lint.sh:*)
+```
 
 **Memory dir.** The capture + surface carriers read and write playbook files in a memory dir. Point `mem-surface.sh` at yours via the `CLAUDE_MEMORY_DIR` env var (default `~/.claude/memory`). If you want a richer capture/recall/search layer underneath this loop, see the companion project **[total-recall](https://github.com/obatried/total-recall)** — recursive-learn is the *learning loop*; total-recall is the *memory system* it writes into.
 
-**Surfacing on other tools.** The installer registers `mem-surface` for `Write`, `Edit`, `MultiEdit`, and `Bash`, so `inform_on_bash_regex` / `inform_on_path_regex` specs work out of the box. An `inform_on_tool` spec only fires for a tool `mem-surface` is actually registered on — to surface a playbook when you call some *other* tool (e.g. a specific MCP tool), add that exact tool name to the `mem-surface` matcher in `~/.claude/settings.json` (its own matcher group is fine).
+**Surfacing on other tools.** As of v3 the installer registers `mem-surface` with the `"*"` matcher, so an `inform_on_tool` spec fires for **any** tool — including a specific MCP tool — with no settings edit. That's affordable because the spec scan is now a single `jq` pass plus a pure-bash loop; the old per-entry loop spawned four `jq` processes per spec (~3s per tool call at 120 specs, now ~0.1s), and a non-`Bash`/non-write call skips every regex entry entirely.
 
 ## Philosophy
 
 - **Forward-only.** Reflect on the session in front of you. Never audit history to score yourself.
 - **Earn the block.** The soft layers (capture, inform, preflight, trigger) never block. The one always-on hard-deny — `learn-guard` — fires only on an **exact spec you installed *after* a real mistake already happened**, so the block is earned by the incident, not guessed up front (and an empty spec file is a total no-op). *Broad or heuristic* guards like `commit-on-red` ship in **log mode**: you read the log first and flip to enforce only once its false-alarm rate is low. A blocking hook that misfires is the fastest way to make you hate your own tooling.
+- **Drain the reports, don't just write them.** Every maintenance signal a memory system produces — merge digests, never-fired entries, recall near-misses — has the same failure mode: it gets *generated* and never *acted on*, so it rots in a directory while the corpus keeps growing. Step C is the consumer, and it routes by **reversibility, not by habit**: a fix that only adds or sharpens a file you already own gets **applied in the run that found it**, and only destructive moves (merging, archiving) are propose-only. A found-but-unapplied fix is a gap that stays open until you happen to say yes.
 - **Keep it small.** Capture + surface + deny. The moment it grows a registry, a taxonomy, or a self-grading audit, it has drifted back into documentation theater. Resist it.
 
 ## Works well with: total-recall

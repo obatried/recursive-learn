@@ -10,6 +10,7 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE="${HOME}/.claude"
 COMMANDS="${CLAUDE}/commands"
 HOOKS="${CLAUDE}/hooks"
+SCRIPTS="${CLAUDE}/scripts"
 STATE_RL="${CLAUDE}/state/recursive-learning"
 STATE_LEARN="${CLAUDE}/state/learn"
 GUARDS="${CLAUDE}/state/guards"
@@ -17,7 +18,7 @@ SETTINGS="${CLAUDE}/settings.json"
 
 command -v python3 >/dev/null 2>&1 || { echo "python3 required"; exit 1; }
 
-mkdir -p "$COMMANDS" "$HOOKS" "$STATE_RL" "$STATE_LEARN" "$GUARDS"
+mkdir -p "$COMMANDS" "$HOOKS" "$SCRIPTS" "$STATE_RL" "$STATE_LEARN" "$GUARDS"
 
 cp "$SRC/commands/learn.md"             "$COMMANDS/learn.md"
 cp "$SRC/hooks/learn-trigger.sh"        "$HOOKS/learn-trigger.sh"
@@ -27,6 +28,12 @@ cp "$SRC/hooks/mem-surface.sh"          "$HOOKS/mem-surface.sh"
 cp "$SRC/hooks/commit-on-red-guard.sh"  "$HOOKS/commit-on-red-guard.sh"
 chmod +x "$HOOKS/learn-trigger.sh" "$HOOKS/learn-preflight.sh" "$HOOKS/learn-guard.sh" \
          "$HOOKS/mem-surface.sh" "$HOOKS/commit-on-red-guard.sh"
+
+# Helper scripts the skill invokes by fixed path (so they're allowlistable as
+# Bash(~/.claude/scripts/<name>:*) instead of prompting on every run).
+cp "$SRC/scripts/learn-finalize.sh"     "$SCRIPTS/learn-finalize.sh"
+cp "$SRC/scripts/inform-specs-lint.sh"  "$SCRIPTS/inform-specs-lint.sh"
+chmod +x "$SCRIPTS/learn-finalize.sh" "$SCRIPTS/inform-specs-lint.sh"
 
 # Seed the spec files only if absent (empty array => the hook is a total no-op).
 [ -f "$GUARDS/guard-specs.json" ]  || cp "$SRC/state/guard-specs.seed.json"  "$GUARDS/guard-specs.json"
@@ -79,15 +86,44 @@ def ensure(event, command, matcher=None):
     arr.append(entry)
     return True
 
+def drop(event, command, keep_matcher):
+    """Remove `command` from any matcher group on `event` other than keep_matcher.
+    Used to migrate a hook to a wider matcher without leaving a duplicate behind
+    (a double registration would fire the hook twice per tool call)."""
+    arr = hooks.get(event, [])
+    if not isinstance(arr, list):
+        return False
+    changed = False
+    for e in list(arr):
+        if not isinstance(e, dict) or e.get("matcher") == keep_matcher:
+            continue
+        hcs = e.get("hooks") or []
+        kept = [hc for hc in hcs if not (isinstance(hc, dict) and hc.get("command") == command)]
+        if len(kept) != len(hcs):
+            changed = True
+            e["hooks"] = kept
+            if not kept:
+                arr.remove(e)
+    return changed
+
 H = "$HOME/.claude/hooks"
 PRE = "Write|Edit|MultiEdit|Bash"
+
+# mem-surface is registered on ALL tools ("*") so an inform_on_tool spec can bind to any
+# tool, not just the write/Bash set. Safe since the v3 single-jq-pass rewrite: a non-Bash,
+# non-Write call skips every regex entry and costs one jq. Migrate an older narrow
+# registration instead of adding a second one.
+migrated = drop("PreToolUse", f"{H}/mem-surface.sh", "*")
+
 results = {
   "UserPromptSubmit/learn-trigger":  ensure("UserPromptSubmit", f"{H}/learn-trigger.sh"),
   "SessionStart/learn-preflight":    ensure("SessionStart",     f"{H}/learn-preflight.sh"),
   "PreToolUse/learn-guard":          ensure("PreToolUse",       f"{H}/learn-guard.sh",         PRE),
-  "PreToolUse/mem-surface":          ensure("PreToolUse",       f"{H}/mem-surface.sh",         PRE),
+  "PreToolUse/mem-surface":          ensure("PreToolUse",       f"{H}/mem-surface.sh",         "*"),
   "PreToolUse/commit-on-red-guard":  ensure("PreToolUse",       f"{H}/commit-on-red-guard.sh", "Bash"),
 }
+if migrated:
+    print("PreToolUse/mem-surface: migrated to matcher '*' (was narrow)")
 
 # Atomic write: temp file in the same dir, validate, then rename over the target.
 dirn = os.path.dirname(os.path.abspath(p)) or "."
@@ -110,3 +146,7 @@ echo
 echo "Installed. The verify-first checklist injects on your NEXT session start."
 echo "Run /learn at the end of a substantive session (or when you say 'wrapping up')."
 echo "Point mem-surface at your playbook dir with CLAUDE_MEMORY_DIR if it isn't ~/.claude/memory."
+echo
+echo "Optional, to stop /learn's closeout from prompting every run, allowlist in settings.json:"
+echo '  Bash(~/.claude/scripts/learn-finalize.sh:*)'
+echo '  Bash(~/.claude/scripts/inform-specs-lint.sh:*)'
